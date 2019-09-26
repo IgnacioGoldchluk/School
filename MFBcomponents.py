@@ -29,6 +29,8 @@ def  MfbComp(Q, Wo, R2):
     
     return R1, R3, C1, C2, Av
 
+
+
 # Programa para devolver los componentes optimos para filtro MFB para tesis de trabajo final
 # Valor comercial = R2, los otros quedan a criterio del usuario
 
