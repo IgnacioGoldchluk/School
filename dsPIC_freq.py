@@ -11,7 +11,7 @@ for N1 in range(2,9): # Stops at 9 because FRC/N1 > 0.8MHz
     for M in range(13*N1,27*N1):# Valid range for the VCO freq
         for N2 in range(2,8,2): # It's actually powers of 2 but this is easier to code
             FOBTENIDA = FRC*M/(N1*N2)
-            DIF = abs(FOSC - FOBTENIDA);
+            DIF = abs(FOSC - FOBTENIDA)
             if ((DIF<MIN) and (N2!=6) and (FOBTENIDA <= FOSC)): # Check if valid
                 MIN = DIF
                 N1_BEST = N1
