@@ -19,8 +19,8 @@
 #include <stdbool.h>
 #include <xc.h>
 
-#define FCY 32000000UL // FCY to use libpic30 libraries
-#include <libpic30.h>
+#define FCY 32000000UL // FCY must be defined before libpic30 include
+#include <libpic30.h>  // Provides delay functions
 
 void initADC10b(void);
 uint16_t readADC(void);
@@ -31,7 +31,7 @@ uint16_t readADC(void);
 
 int main(void)
 {
-    uint16_t potValue, blinkDelay;
+
     // Configure PLL prescaler, PLL postscaler, PLL divisor
     // Fcy = 32MHz
     PLLFBD = 50; // M = 52
@@ -46,6 +46,7 @@ int main(void)
     // Wait for PLL to lock
     while(OSCCONbits.LOCK!=1) {};
     
+    uint16_t potValue, blinkDelay;
     TRISBbits.TRISB0 = 0; // Define RB0 as output
     initADC10b();
     
@@ -60,9 +61,9 @@ int main(void)
     // Infinite loop
     while(1)
     {
-        BLINKING_LED ^=1; // Toggle
+        BLINKING_LED ^=1; // Toggle LED
         potValue = readADC(); // Read value from ADC manually
-        blinkDelay = (uint16_t)(m*potValue + b);
+        blinkDelay = (uint16_t)(m*potValue + b); // Map ADC range to delay
         __delay_ms(blinkDelay);   
     }
     
