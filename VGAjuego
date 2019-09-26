@@ -1,0 +1,532 @@
+library ieee;
+use ieee.std_logic_1164.all;
+use ieee.numeric_std.all;
+
+library lpm;
+use lpm.lpm_components.all;
+
+library altera;
+use altera.maxplus2.all;
+
+entity vga is
+port (Reset : in std_logic;
+		Clk: in std_logic;
+		srojo,sverde,sazul : out std_logic_vector(9 downto 0);
+		VGA_HS,VGA_VS,VGA_BLANK,VGA_SYNC,VGA_CLK : out std_logic;
+		P1U,P1D,P2U,P2D: in std_logic
+		);
+end vga;
+
+architecture maxpld of vga is
+--señales
+	signal vga_HSaux : std_logic;
+	signal vga_VSaux : std_logic;
+	signal cont_vs : std_logic;
+	signal H_BLANK : std_logic;
+	signal V_BLANK : std_logic;
+	signal cont25mhz : std_logic;
+	signal clk20hz : std_logic;
+	signal clk50hz : std_logic;
+	signal abcd_hs : std_logic_vector(9 downto 0);
+	signal abcd_vs : std_logic_vector(9 downto 0); 
+	signal coordy1 : integer range 0 to 524;
+	signal coordy2 : integer range 0 to 524;
+	signal coordyP : integer range 0 to 524;
+	signal coordxP : integer range 0 to 799;
+	signal scoreP1 : integer range 0 to 9;
+	signal scoreP2 : integer range 0 to 9;
+	signal dirs1 : integer range 0 to 20;
+	signal dirs2 : integer range 0 to 20;
+
+begin
+process(clk,reset)
+	variable cnt: integer range 0 to 1;
+begin
+	if reset='0' then
+		cont25mhz<='0';
+	elsif (Clk'event and Clk='1') then
+		cont25mhz <= not(cont25mhz);
+	end if;
+end process;
+
+process(clk,reset) -- velocidad paletas, cuanto menor es cont20 mas rapido son
+ variable cont20: integer range 0 to 270000;
+begin
+	if reset='0' then
+		clk20hz<='0';
+		cont20:= 0;
+	elsif (clk'event and clk='1') then
+		cont20:= cont20+1;
+		if (cont20>=135000) then
+			clk20hz<='1';
+		else
+			clk20hz<='0';
+		end if;
+	end if;
+end process;
+
+process(clk,reset) --velocidad pelota, cuanto menor es cont50 mas rapido se mueve
+ variable cont50: integer range 0 to 200000;
+begin
+	if reset='0' then
+		clk50hz<='0';
+		cont50:= 0;
+	elsif (clk'event and clk='1') then
+		cont50:= cont50+1;
+		if (cont50>=100000) then
+			clk50hz<='1';
+		else
+			clk50hz<='0';
+		end if;
+	end if;
+end process;
+
+VGA_CLK <= cont25mhz;
+VGA_SYNC <= '0';
+
+contador_vgahs : lpm_counter
+								generic map(LPM_WIDTH => 10, LPM_MODULUS => 800)
+								port map(aclr => not(reset), q=>abcd_hs(9 downto 0), clock => cont25mhz);
+								
+contador_vgavs : lpm_counter
+								generic map(LPM_WIDTH => 10, LPM_MODULUS => 525)
+								port map(aclr => not(reset), q=>abcd_vs(9 downto 0), clock => (cont_vs));
+								
+								
+
+--Horizontales								
+								
+vga_HSaux <= '1' when abcd_hs >= "0001100000" else
+				 '0';
+H_BLANK <= '1' when (abcd_hs >= "0010010000") and (abcd_hs <= "1100010000") else
+			  '0';
+vga_HS <= vga_HSaux;
+
+process (clk,reset,vga_HSaux) --sincronismo de contadores
+begin
+	if reset='0' then
+		cont_vs<='0';
+	elsif (clk='0' and clk'event) then
+		cont_vs <= vga_HSaux;
+	end if;
+end process;
+		
+--Verticales		
+vga_VSaux <= '1' when abcd_vs >= "0000000010" else
+				 '0';
+V_BLANK <= '1' when (abcd_vs >= "0000100011") and (abcd_vs <= "1000000010") else
+			  '0';	
+vga_VS <= vga_VSaux;
+			  
+--Asignacion final
+VGA_BLANK <= H_BLANK and V_BLANK;
+
+
+--Movemos paletas (10x48)
+process(reset,clk20hz,P1U,P1D,P2U,P2D) 
+	variable pary1: integer range 0 to 524;
+	variable pary2: integer range 0 to 524;
+begin
+	if reset='0' then
+		pary1:= 250;
+		pary2:= 250;
+	elsif (clk20hz'event and clk20hz='1') then
+		if (P1U='0' and pary1>71) then
+			pary1:= pary1-1;
+		elsif (P1D='0' and pary1<467) then
+			pary1:=pary1+1;
+		end if;
+		if (P2U='0' and pary2>71) then
+			pary2:= pary2-1;
+		elsif (P2D='0' and pary2<467) then
+			pary2:=pary2+1;
+		end if;
+	end if;
+	coordy1 <= pary1;
+	coordy2 <= pary2;
+end process;	
+
+--Pelota del pong (10x10)
+process(clk50hz,reset,P1D,P1U,P2D,P2U) 
+	variable parx: integer range 0 to 799;
+	variable pary: integer range 0 to 524;
+	variable dirx : integer range -1 to 1;
+	variable diry : integer range -1 to 1;
+	variable score1 : integer range 0 to 9;
+	variable score2 : integer range 0 to 9;
+begin
+	if reset='0' then
+		parx:= 463;
+		pary:= 250;
+		dirx:=0;
+		diry:=0;
+		score1:=0;
+		score2:=0;
+	elsif (dirx=0 and diry=0 and (P1D='0' or P1U='0' or P2U='0' or P2D='0')) then --comienzo, sino no empieza
+		dirx:=1;
+		diry:=1;
+	elsif (clk50hz'event and clk50hz='1') then	--rebote vertical
+		if (pary<=70) then
+			diry:=1;
+		elsif (pary>=506) then
+			diry:=-1;
+		end if;
+		if (parx<=143) then --paredes punto
+			parx:= 463;
+			pary:= 250;
+			dirx:=1;
+			score2:=score2+1;
+			if (score2>9) then
+				score1:=0;
+				score2:=0;
+				dirx:=0;
+				diry:=0;
+			end if;
+		elsif (parx>=775) then
+			parx:= 463;
+			pary:= 250;
+			dirx:=-1;
+			score1:=score1+1;
+			if (score1>9) then
+				score1:=0;
+				score2:=0;
+				dirx:=0;
+				diry:=0;
+			end if;
+		end if;
+		if (parx=765 and (pary+9>=coordy2) and (pary<=coordy2+47)) then --rebote paleta
+			dirx:=-1;
+		elsif (parx = 153 and (pary+9>=coordy1) and (pary<=coordy1+47)) then
+			dirx:=1;
+		end if;
+		parx:=parx+dirx;
+		pary:=pary+diry;
+	end if;
+	coordxP <= parx;
+	coordyP <= pary;
+	scoreP1 <= score1;
+	scoreP2 <= score2;
+end process;
+
+	
+	
+
+--Asignacion colores
+process(abcd_hs,abcd_vs,cont25mhz)
+ variable hentero: integer range 0 to 799;
+ variable ventero: integer range 0 to 524;
+ variable conth1: integer range 0 to 3; --contador de cada pixel horizontal
+ variable contv1: integer range 0 to 3; --contador de cada pixrl vertical
+ variable dirh1: integer range 0 to 3;
+ variable dirv1: integer range 0 to 18;
+ variable conth2: integer range 0 to 3; --contador de cada pixel horizontal
+ variable contv2: integer range 0 to 3; --contador de cada pixrl vertical
+ variable dirh2: integer range 0 to 3;
+ variable dirv2: integer range 0 to 18;
+begin
+		hentero:=to_integer((unsigned(abcd_hs)));
+		ventero:=to_integer((unsigned(abcd_vs)));
+	If reset='0' then
+		conth1:=0;
+		contv1:=0;
+		dirh1:=0;
+		dirv1:=0;
+		conth2:=0;
+		contv2:=0;
+		dirh2:=0;
+		dirv2:=0;
+	elsif (cont25mhz'event and cont25mhz='1') then 
+		if (hentero>=coordxP and hentero<(coordxP+10) and (ventero>=coordyP and ventero<(coordyP+10))) then  --color pelota
+			srojo(9 downto 0) <= "1111111111";
+			sverde(9 downto 0) <= "1111111111";
+			sazul(9 downto 0) <= "1111111111";
+		elsif (hentero>=143 and hentero<153 and (ventero>=coordy1 and ventero<(coordy1+48))) then --color paleta 1
+			srojo(9 downto 0) <= "0000000000";
+			sverde(9 downto 0) <= "1111111111";
+			sazul(9 downto 0) <= "0000000000";
+		elsif (hentero>=775 and hentero<785 and (ventero>=coordy2 and ventero<(coordy2+48))) then --color paleta 2
+			srojo(9 downto 0) <= "1111111111";
+			sverde(9 downto 0) <= "0000000000";
+			sazul(9 downto 0) <= "0000000000";
+		elsif	(ventero>=65 and ventero<70) then 
+			srojo(9 downto 0) <= "1111111111";
+			sverde(9 downto 0) <= "1111111111";
+			sazul(9 downto 0) <= "1111111111";
+		elsif (hentero>=461 and hentero<466) then 
+			srojo(9 downto 0) <= "1111111111";
+			sverde(9 downto 0) <= "1111111111";
+			sazul(9 downto 0) <= "1111111111";
+		elsif (hentero>=245 and hentero<254  and ventero>=45 and ventero<63) then --Marcador 1
+			case scoreP1 is
+					when 0 => 
+						if (dirs1<4 or (dirs1>=5 and dirs1<7) or (dirs1>=8 and dirs1<10) or (dirs1>=11 and dirs1<13) or (dirs1>=14 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+							
+					when 1 => 
+						if (dirs1=2 or dirs1=5 or dirs1=8 or dirs1=11 or dirs1=14 or dirs1=17) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 2 => 
+						if (dirs1<3 or (dirs1>=5 and dirs1<10) or dirs1=12 or (dirs1>=15 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 3 => 
+						if (dirs1<3 or (dirs1>=5 and dirs1<9) or dirs1=11 or (dirs1>=14 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 4 => 
+						if (dirs1=0 or (dirs1>=2 and dirs1<4) or (dirs1>=5 and dirs1<9) or dirs1=11 or dirs1=14 or dirs1=17) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 5 => 
+						if (dirs1<4 or (dirs1>=6 and dirs1<9) or dirs1=11 or dirs1=14 or (dirs1>=15 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 6 => 
+						if (dirs1<4 or (dirs1>=6 and dirs1<10) or (dirs1>=11 and dirs1<13) or (dirs1>=14 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 7 => 
+						if (dirs1<3 or dirs1=5 or dirs1=8 or dirs1=11 or dirs1=14 or dirs1=17) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 8 => 
+						if (dirs1<4 or (dirs1>=5 and dirs1<10) or (dirs1>=11 and dirs1<13) or (dirs1>=14 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 9 => 
+						if (dirs1<4 or (dirs1>=5 and dirs1<9) or dirs1=11 or (dirs1>=14 and dirs1<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+			end case;
+			
+			conth1:=conth1+1; 
+			if (conth1=3) then
+				conth1:=0;
+				dirh1:=dirh1+1;
+				if (dirh1=3) then
+					dirh1:=0;
+					contv1:=contv1+1;
+					if (contv1=3) then
+						contv1:=0;
+						dirv1:=dirv1+3;
+						if (dirv1=18) then
+							dirv1:=0;
+						end if;
+					end if;
+				end if;
+			end if;		
+			--dirs1 <= std_logic_vector(to_unsigned(dirh1+dirv1,5)); --max=17  2 a la 5
+			dirs1 <= dirh1+dirv1;
+			
+		elsif (hentero>=645 and hentero<654  and ventero>=45 and ventero<63) then --Marcador 1
+			case scoreP2 is
+					when 0 => 
+						if (dirs2<4 or (dirs2>=5 and dirs2<7) or (dirs2>=8 and dirs2<10) or (dirs2>=11 and dirs2<13) or (dirs2>=14 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+							
+					when 1 => 
+						if (dirs2=2 or dirs2=5 or dirs2=8 or dirs2=11 or dirs2=14 or dirs2=17) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 2 => 
+						if (dirs2<3 or (dirs2>=5 and dirs2<10) or dirs2=12 or (dirs2>=15 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 3 => 
+						if (dirs2<3 or (dirs2>=5 and dirs2<9) or dirs2=11 or (dirs2>=14 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 4 => 
+						if (dirs2=0 or (dirs2>=2 and dirs2<4) or (dirs2>=5 and dirs2<9) or dirs2=11 or dirs2=14 or dirs2=17) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 5 => 
+						if (dirs2<4 or (dirs2>=6 and dirs2<9) or dirs2=11 or dirs2=14 or (dirs2>=15 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 6 => 
+						if (dirs2<4 or (dirs2>=6 and dirs2<10) or (dirs2>=11 and dirs2<13) or (dirs2>=14 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 7 => 
+						if (dirs2<3 or dirs2=5 or dirs2=8 or dirs2=11 or dirs2=14 or dirs2=17) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 8 => 
+						if (dirs2<4 or (dirs2>=5 and dirs2<10) or (dirs2>=11 and dirs2<13) or (dirs2>=14 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+						
+					when 9 => 
+						if (dirs2<4 or (dirs2>=5 and dirs2<9) or dirs2=11 or (dirs2>=14 and dirs2<18)) then
+							srojo(9 downto 0) <= "1111111111";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						else
+							srojo(9 downto 0) <= "0000000000";
+							sverde(9 downto 0) <= "0000000000";
+							sazul(9 downto 0) <= "0000000000";
+						end if;
+			end case;
+			
+			conth2:=conth2+1; 
+			if (conth2=3) then
+				conth2:=0;
+				dirh2:=dirh2+1;
+				if (dirh2=3) then
+					dirh2:=0;
+					contv2:=contv2+1;
+					if (contv2=3) then
+						contv2:=0;
+						dirv2:=dirv2+3;
+						if (dirv2=18) then
+							dirv2:=0;
+						end if;
+					end if;
+				end if;
+			end if;
+
+					
+			--dirs2 <= std_logic_vector(to_unsigned(dirh2+dirv2,5)); --max=17  2 a la 5
+			dirs2 <= dirh2+dirv2;
+		else	
+			srojo(9 downto 0) <= "0000000000";
+			sverde(9 downto 0) <= "0000000000";
+			sazul(9 downto 0) <= "0000000000";
+		end if;
+	end if;
+end process;
+
+end maxpld;
