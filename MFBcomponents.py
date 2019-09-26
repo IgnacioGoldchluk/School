@@ -29,10 +29,6 @@ def  MfbComp(Q, Wo, R2):
     
     return R1, R3, C1, C2, Av
 
-
-import os
-
-
 # Programa para devolver los componentes optimos para filtro MFB para tesis de trabajo final
 # Valor comercial = R2, los otros quedan a criterio del usuario
 
@@ -41,7 +37,6 @@ R_standard = [1, 1.1, 1.2, 1.3, 1.5, 1.6, 1.8, 2, 2.2, 2.4, 2.7, 3, 3.3, 3.6,\
 
 Header = ['R1', 'R2', 'R3', 'C1', 'C2', 'Av']
 Componentes = []
-folder = os.getcwd()
 componentfile = open('components.txt', '+w')
 separador = '   '
 componentfile.write(separador.join(Header) + '\n')
