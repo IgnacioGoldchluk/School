@@ -24,10 +24,6 @@
 
 void initADC10b(void);
 uint16_t readADC(void);
-void Delay_usec(uint16_t); // Function for converting
-void Delay_msec(uint16_t); // Function for blinking
-
-
 
 #define BLINKING_LED LATBbits.LATB0
 
