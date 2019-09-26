@@ -25,6 +25,8 @@
 void initADC10b(void);
 uint16_t readADC(void);
 
+
+
 #define BLINKING_LED LATBbits.LATB0
 
 int main(void)
